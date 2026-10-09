@@ -63,13 +63,18 @@ kbd{font-family:var(--f-mono);font-size:.78rem;background:var(--deck);border:1px
   .playrow .stage{grid-area:stage}
   .pad-l{display:flex;grid-area:l;justify-content:flex-start}
   .pad-r{display:flex;grid-area:r;align-items:flex-end}
+  .wrap{padding-block:8px 20px;gap:8px}
+  .top .brand span{display:none}
+  .playrow .stage{width:100%;border-left:0;border-right:0}
+  .dpad{width:164px;height:164px}.dpad i{width:50px;height:50px}.dpad i.u{left:56px}.dpad i.d{left:56px}.dpad i.l{top:56px}.dpad i.r{top:56px}
+  .fire{width:112px;height:112px}
+  .pad-row{display:flex;gap:8px}
 }
 @media (hover:none) and (pointer:coarse) and (orientation:landscape){
-  .top,.manual{display:none}
-  .wrap{padding-block:6px;gap:6px}
-  .hud .cell{padding:3px 8px}
+  .top,.manual,.hud{display:none}
+  .wrap{padding-block:4px;gap:4px;max-width:none}
   .playrow{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"l stage r";gap:10px}
-  .playrow .stage{width:min(100%, calc((100dvh - 70px) * 4 / 3))}
+  .playrow .stage{width:min(100%, calc((100dvh - 12px) * 4 / 3))}
   .pad-r{align-items:center}
 }
 @media (max-width:720px){
@@ -100,7 +105,7 @@ kbd{font-family:var(--f-mono);font-size:.78rem;background:var(--deck);border:1px
   <div class="playrow">
     <div class="pad-l"><div class="dpad" id="dpad" aria-label="方向鍵"><i class="u">▲</i><i class="l">◀</i><i class="r">▶</i><i class="d">▼</i></div></div>
     <div class="stage"><canvas id="game" aria-label="遊戲畫面"></canvas></div>
-    <div class="pad-r"><button class="fire" id="bFire" type="button">射擊</button><button class="start" id="bStart" type="button">START</button></div>
+    <div class="pad-r"><button class="fire" id="bFire" type="button">射擊</button><div class="pad-row"><button class="start" id="bZoom" type="button">放大 ×1.5</button><button class="start" id="bStart" type="button">START</button></div></div>
   </div>
 
   <section class="manual">
@@ -367,6 +372,11 @@ window.addEventListener('keydown',e=>{const k=KEYMAP[e.code];if(!k)return;e.prev
 window.addEventListener('keyup',e=>{const k=KEYMAP[e.code];if(!k)return;e.preventDefault();vUp(k);});
 window.addEventListener('blur',()=>{held.clear();dirStack.length=0;if(G.state==='play')G.paused=true;});
 cv.addEventListener('pointerdown',()=>{audio();press.add('tap');});
+const IS_TOUCH=!!(window.matchMedia&&window.matchMedia('(hover:none) and (pointer:coarse)').matches);
+const ZOOMS=[1,1.5,2];let zoomI=IS_TOUCH?1:0;try{const z=localStorage.getItem('ykZoom');if(z!=null&&ZOOMS[+z]!=null)zoomI=+z;}catch(e){}
+const CAM={x:W/2,y:H/2};
+function zoomLabel(){const b=document.getElementById('bZoom');if(b)b.textContent=ZOOMS[zoomI]===1?'全景':'放大 ×'+ZOOMS[zoomI];}
+function cycleZoom(){zoomI=(zoomI+1)%ZOOMS.length;try{localStorage.setItem('ykZoom',String(zoomI));}catch(e){}zoomLabel();}
 function startBtn(){audio();if(G.state==='play')press.add('pause');else press.add('enter');}
 /* 手機方向盤：手指按住後可滑動換方向 */
 (function(){const dp=document.getElementById('dpad'),fb=document.getElementById('bFire'),sb=document.getElementById('bStart');if(!dp||!dp.addEventListener)return;
@@ -379,7 +389,7 @@ function startBtn(){audio();if(G.state==='play')press.add('pause');else press.ad
   dp.addEventListener('pointerup',end);dp.addEventListener('pointercancel',end);dp.addEventListener('contextmenu',e=>e.preventDefault());
   const hold=(b,k,extra)=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.classList.add('on');if(k)vDown(k);if(extra)extra();buzz(10);});
     const up=e=>{e.preventDefault();b.classList.remove('on');if(k)vUp(k);};b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up);b.addEventListener('pointerleave',up);b.addEventListener('contextmenu',e=>e.preventDefault());};
-  hold(fb,'fire',()=>press.add('tap'));hold(sb,null,startBtn);
+  hold(fb,'fire',()=>press.add('tap'));hold(sb,null,startBtn);const zb=document.getElementById('bZoom');if(zb){hold(zb,null,cycleZoom);zoomLabel();}
   void KS;})();
 function buzz(ms){try{if(navigator.vibrate)navigator.vibrate(ms);}catch(e){}}
 /* 手柄（Gamepad API） */
@@ -444,7 +454,12 @@ function updParts(dt){
   G.parts=G.parts.filter(p=>p.life>0);if(G.parts.length>1100)G.parts.splice(0,G.parts.length-1100);}
 
 /* ================= 關卡流程 ================= */
-function startGame(){G.lives=3;G.score=0;G.runT=0;G.bonus=0;loadStage(0);}
+function startGame(){G.lives=3;G.score=0;G.runT=0;G.bonus=0;G.cont=0;loadStage(0);}
+/* 接關：管理棟還在 → 原地重新出擊（敵軍、BOSS 血量都保留）；管理棟被打爆 → 重來本關 */
+function doContinue(){G.cont=(G.cont||0)+1;G.lives=3;G.powerT=0;G.overT=0;G.respawnT=0;
+  if(G.baseHp>0){for(const b of G.bullets)if(b.team===1)b.alive=false;G.bullets=G.bullets.filter(b=>b.alive);
+    G.player=makeTank('player',map.pspawn.x,map.pspawn.y,0);G.player.shield=4;G.state='play';G.stateT=0;G.flashW=0.5;popText(map.pspawn.x,map.pspawn.y-26,'接關！','#ffd60a');sfx.jingle();}
+  else{const sc=G.score;loadStage(G.stageIdx);G.score=sc;G.lives=3;}}
 function setupMap(i){map=STAGES[i].build();renderGround();renderSolid();renderOver();tx.setTransform(1,0,0,1,0,0);tx.clearRect(0,0,trackC.width,trackC.height);
   G.cars=[];if(map.hw)for(let k=0;k<10;k++)G.cars.push({lane:k%4,y:rand(0,H),v:(k%4<2?-1:1)*rand(40,70),c:['#e8e6e0','#2b2f36','#b8bcc2','#a33a2a','#d0a33a'][k%5],trk:k%3===0});}
 function loadStage(i){
@@ -574,7 +589,7 @@ function update(dt){
     case 'clear':for(const e of G.enemies)e.alive=false;if(G.stateT>6.6)loadStage(G.stageIdx+1);break;
     case 'bossdown':G.bdT-=dt;if(G.bdT<=0&&G.stateT<2.6){G.bdT=0.17;boom(G.bossPos.x+rand(-26,26),G.bossPos.y+rand(-26,26),rand(0.8,1.6));}
       if(G.stateT>3.2){G.state='victory';G.stateT=0;G.vt=0;G.flashW=1;G.bonus=G.lives*3000+G.baseHp*1000;G.score+=G.bonus;saveHi();sfx.fanfare();}break;
-    case 'gameover':if(G.stateT>1.2&&go){G.state='title';G.stateT=0;setupMap(0);}break;
+    case 'gameover':if(G.stateT>1.2&&G.stateT<10&&go){doContinue();}else if(G.stateT>=10&&go){G.state='title';G.stateT=0;setupMap(0);}break;
     case 'victory':G.vt+=dt;if(G.vt>8&&go){G.state='title';G.stateT=0;setupMap(0);}break;
   }
   if(dirty){renderSolid(dirty.x0-1,dirty.y0-1,dirty.x1+3,dirty.y1+3);dirty=null;}
@@ -788,8 +803,18 @@ function drawWorld(){
   ctx.drawImage(overC,0,0,W,H);
   if(map.hw){const x=map.hw.x*T,w=map.hw.w*T;for(const c of G.cars){const cx=x+[w*0.18,w*0.38,w*0.62,w*0.82][c.lane];ctx.fillStyle='rgba(0,0,0,0.25)';ctx.fillRect(cx-1.5,c.y-3,4,c.trk?13:8);
     ctx.fillStyle=c.c;ctx.fillRect(cx-2.5,c.y-4,5,c.trk?13:8);ctx.fillStyle='rgba(30,40,50,0.8)';ctx.fillRect(cx-2,c.v<0?c.y-3:c.y+(c.trk?6:2),4,2);}}
-  drawParts();
-  ctx.drawImage(vigC,0,0,W,H);}
+  drawParts();}
+function drawOffscreen(z){const hw=W/2/z,hh=H/2/z;
+  for(const e of G.enemies){if(!e.alive)continue;const c=center(e);const sx3=(c.x-CAM.x)*z+W/2,sy3=(c.y-CAM.y)*z+H/2;if(sx3>-4&&sx3<W+4&&sy3>-4&&sy3<H+4)continue;
+    const m=16,px=Math.max(m,Math.min(W-m,sx3)),py=Math.max(m,Math.min(H-m,sy3));const a=Math.atan2(sy3-py,sx3-px);const big=KIND[e.kind].boss?1.6:1;
+    ctx.save();ctx.translate(px,py);ctx.rotate(a);ctx.fillStyle=KIND[e.kind].col;ctx.strokeStyle='rgba(0,0,0,0.7)';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(9*big,0);ctx.lineTo(-6*big,-6*big);ctx.lineTo(-3*big,0);ctx.lineTo(-6*big,6*big);ctx.closePath();ctx.stroke();ctx.fill();ctx.restore();}
+  const b=BASEC;const bx=(b.x-CAM.x)*z+W/2,by=(b.y-CAM.y)*z+H/2;
+  if((bx<0||bx>W||by<0||by>H)&&G.baseHp<3&&Math.floor(G.t*3)%2===0){const px=Math.max(18,Math.min(W-18,bx)),py=Math.max(18,Math.min(H-40,by));ctx.fillStyle='rgba(228,72,58,0.9)';ctx.beginPath();ctx.arc(px,py,8,0,6.283);ctx.fill();txt('!',px,py,'900 11px '+FB,'#fff');}}
+function drawMiniHud(){const P=G.player;ctx.fillStyle='rgba(8,12,16,0.62)';ctx.fillRect(10,10,250,20);
+  for(let i=0;i<KIND.player.hp;i++){ctx.fillStyle=P&&P.alive&&i<P.hp?'#ffd60a':'rgba(255,255,255,0.18)';ctx.fillRect(16+i*9,15,7,10);}
+  ctx.font='11px '+FM;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#ffffff';
+  let e=String(remaining());if(S().boss&&!G.bossDefeated)e+='+B';ctx.fillText('×'+Math.max(0,G.lives)+'  基地'+G.baseHp+'  敵'+e,76,20);
+  ctx.textAlign='right';ctx.fillText(String(G.score).padStart(6,'0'),254,20);}
 function drawCam(){const st=S();ctx.strokeStyle='rgba(255,255,255,0.75)';ctx.lineWidth=1.2;const m=8,l=14;
   ctx.beginPath();ctx.moveTo(m,m+l);ctx.lineTo(m,m);ctx.lineTo(m+l,m);ctx.moveTo(W-m-l,m);ctx.lineTo(W-m,m);ctx.lineTo(W-m,m+l);ctx.moveTo(m,H-m-l);ctx.lineTo(m,H-m);ctx.lineTo(m+l,H-m);ctx.moveTo(W-m-l,H-m);ctx.lineTo(W-m,H-m);ctx.lineTo(W-m,H-m-l);ctx.stroke();
   ctx.font='9px '+FM;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(18,H-24,214,13);ctx.fillStyle='rgba(255,255,255,0.85)';
@@ -801,6 +826,7 @@ function drawBossBar(){const b=G.boss;if(!b||b.spawn>0)return;const K=KIND[b.kin
   ctx.fillStyle='rgba(0,0,0,0.6)';for(let i=1;i<b.maxHp;i++)ctx.fillRect(x+w*i/b.maxHp,y,1,h);ctx.strokeStyle='#ebe4d2';ctx.lineWidth=1;ctx.strokeRect(x-0.5,y-0.5,w+1,h+1);}
 function drawOverlays(){const st=S();
   if(G.state==='play'||G.state==='intro'||G.state==='clear')drawCam();
+  if(IS_TOUCH&&window.matchMedia('(orientation:landscape)').matches&&G.state==='play'&&!G.boss)drawMiniHud();
   if(G.powerT>0&&G.state==='play')txt('穿甲彈 '+Math.ceil(G.powerT),W-14,H-17,'700 11px '+FB,'#ffb34a','right');
   if(G.state==='play')drawBossBar();
   if(G.warnT>0&&G.state==='play'){const on=Math.floor(G.t*4)%2===0;ctx.fillStyle=on?'rgba(205,52,40,0.9)':'rgba(110,18,14,0.9)';ctx.fillRect(0,186,W,108);
@@ -811,8 +837,12 @@ function drawOverlays(){const st=S();
   if(G.state==='intro'){const a=Math.min(1,G.stateT*3,(2.6-G.stateT)*3);ctx.globalAlpha=Math.max(0,a);band(146,188,0.86);ctx.fillStyle='#f2a33a';ctx.fillRect(W/2-120,166,240,2);
     txt(st.code,W/2,192,'30px '+FD,'#f2a33a');txt(st.name,W/2,230,'900 28px '+FB,'#ebe4d2');txt(st.en,W/2,258,'11px '+FM,'#a9b4ba');txt(st.coord,W/2,276,'11px '+FM,'#a9b4ba');txt(st.brief,W/2,304,'500 14px '+FB,'#ebe4d2');ctx.globalAlpha=1;}
   if(G.state==='clear'){band(170,140,0.86);txt('STAGE CLEAR',W/2,208,'34px '+FD,'#f2a33a');txt(st.name+' 確保',W/2,246,'900 20px '+FB,'#ebe4d2');txt('殘餘耐久與管理棟獎勵 +'+G.stageBonus,W/2,280,'13px '+FM,'#a9b4ba');}
-  if(G.state==='gameover'){band(0,H,0.55);band(160,160,0.86);txt('作戰失敗',W/2,206,'900 40px '+FB,'#ff5a48');txt('SCORE '+String(G.score).padStart(6,'0'),W/2,250,'16px '+FM,'#ebe4d2');
-    if(G.stateT>1.2&&Math.floor(G.t*2)%2===0)txt('按 ENTER 或點擊畫面 回到標題',W/2,288,'700 14px '+FB,'#f2a33a');}
+  if(G.state==='gameover'){band(0,H,0.55);band(140,200,0.88);
+    if(G.stateT<10){const n=Math.max(0,Math.ceil(10-G.stateT));txt('CONTINUE?',W/2,176,'34px '+FD,'#ffd60a');txt(String(n),W/2,234,'64px '+FP,'#ffffff');
+      txt(G.baseHp>0?(G.boss?'從這裡繼續打'+KIND[G.boss.kind].name+'（BOSS 血量保留）':'從這裡繼續作戰（戰況保留）'):'管理棟失守，從本關開頭重新出擊',W/2,286,'700 14px '+FB,'#ebe4d2');
+      if(G.stateT>1.2&&Math.floor(G.t*3)%3!==0)txt('按 START／Enter 或點擊畫面 接關',W/2,316,'700 14px '+FB,'#f2a33a');}
+    else{txt('GAME OVER',W/2,206,'36px '+FD,'#ff5a48');txt('SCORE '+String(G.score).padStart(6,'0'),W/2,252,'16px '+FM,'#ebe4d2');
+      if(Math.floor(G.t*2)%2===0)txt('按 ENTER 或點擊畫面 回到標題',W/2,292,'700 14px '+FB,'#f2a33a');}}
   if(G.paused){band(0,H,0.55);txt('PAUSE',W/2,H/2-8,'36px '+FD,'#ebe4d2');txt('按 P 繼續',W/2,H/2+28,'700 14px '+FB,'#a9b4ba');}}
 
 /* ================= 標題畫面 ================= */
@@ -933,7 +963,7 @@ function drawVictory(){const t=G.vt,hz=286,qy=330;
   const done=2.6+VLINES.join('').length/15+0.8;
   if(t>done){const a=Math.min(1,(t-done)*2);ctx.globalAlpha=a;band(18,112,0.55);
     txt('MISSION COMPLETE',W/2,48,'30px '+FD,'#f2a33a');txt('橫濱港 全面解放',W/2,82,'900 20px '+FB,'#ebe4d2');
-    const mm=Math.floor(G.runT/60),ss=Math.floor(G.runT%60);txt('SCORE '+String(G.score).padStart(6,'0')+'　　作戰時間 '+String(mm).padStart(2,'0')+':'+String(ss).padStart(2,'0')+'　　殘機獎勵 +'+G.bonus,W/2,110,'12px '+FM,'#ebe4d2');ctx.globalAlpha=1;}
+    const mm=Math.floor(G.runT/60),ss=Math.floor(G.runT%60);txt('SCORE '+String(G.score).padStart(6,'0')+'　　作戰時間 '+String(mm).padStart(2,'0')+':'+String(ss).padStart(2,'0')+'　　殘機獎勵 +'+G.bonus+(G.cont?'　　接關 '+G.cont+' 次':''),W/2,110,'12px '+FM,'#ebe4d2');ctx.globalAlpha=1;}
   if(t>8&&Math.floor(G.t*2)%2===0)txt('按 ENTER 或點擊畫面 回到標題',W-36,456,'700 11px '+FB,'#f2a33a','right');}
 
 /* ================= HUD ================= */
@@ -955,7 +985,14 @@ function updHud(){
 function draw(){ctx.setTransform(RS,0,0,RS,0,0);ctx.imageSmoothingQuality='high';ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
   let sx2=0,sy2=0;if(G.shake>0&&!G.paused){sx2=rand(-G.shake,G.shake);sy2=rand(-G.shake,G.shake);}
   ctx.save();ctx.translate(sx2,sy2);
-  if(G.state==='title')drawTitle();else if(G.state==='victory')drawVictory();else drawWorld();
+  if(G.state==='title')drawTitle();else if(G.state==='victory')drawVictory();
+  else{const z=ZOOMS[zoomI];
+    if(z>1){const P=G.player;const tgt=P&&P.alive?center(P):(G.state==='bossdown'&&G.bossPos?G.bossPos:BASEC);const hw=W/2/z,hh=H/2/z;
+      const tx3=Math.max(hw,Math.min(W-hw,tgt.x)),ty3=Math.max(hh,Math.min(H-hh,tgt.y));CAM.x+=(tx3-CAM.x)*0.12;CAM.y+=(ty3-CAM.y)*0.12;
+      CAM.x=Math.max(hw,Math.min(W-hw,CAM.x));CAM.y=Math.max(hh,Math.min(H-hh,CAM.y));
+      ctx.save();ctx.translate(W/2,H/2);ctx.scale(z,z);ctx.translate(-CAM.x,-CAM.y);drawWorld();ctx.restore();drawOffscreen(z);}
+    else drawWorld();
+    ctx.drawImage(vigC,0,0,W,H);}
   ctx.restore();
   if(G.state!=='title'&&G.state!=='victory')drawOverlays();
   if(G.flashW>0){ctx.fillStyle='rgba(255,248,230,'+G.flashW+')';ctx.fillRect(0,0,W,H);}
